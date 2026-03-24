@@ -11,14 +11,14 @@ Open source. Always free.
 ## TL;DR
 
 ```bash
-# Install
-curl -fsSL https://get.tunaagent.dev | bash
+# Install the CLI
+curl -fsSL https://get.tunaagent.dev/install.sh | bash
 
-# Connect your first service (one command)
+# One command to expose any local port
 tuna connect --port 3000 --subdomain my-app
 
-# Done. Your app is live at:
-# https://my-app.tunapps.example.com
+# Your app is live at:
+# https://my-app.tuna.cloud
 ```
 
 ---
@@ -31,9 +31,8 @@ tuna connect --port 3000 --subdomain my-app
 │                                                                   │
 │   tuna connect --port 3000 --subdomain my-app                   │
 │                    │                                              │
-│              TunaAgent                                           │
-│                 🐟 ──────────────────────────────►  wss://tuna.cloud
-│                        (outbound :443)                            │
+│              TunaAgent 🐟 ───────────────────────────►  wss://tuna.cloud
+│                        (outbound :443)                           │
 └─────────────────────────────────────────────────────────────────┘
                                                               │
                                                               ▼
@@ -41,12 +40,12 @@ tuna connect --port 3000 --subdomain my-app
                               │            TunaHub                  │
                               │     (your publicly hosted server)     │
                               │                                      │
-                              │  nginx :443 → routes incoming       │
-                              │  requests to the right TunaAgent    │
+                              │  nginx :443 → routes incoming        │
+                              │  requests to the right TunaAgent     │
                               └─────────────────────────────────────┘
                                                               │
                                                               ▼
-                              https://my-app.tunapps.example.com
+                              https://my-app.tuna.cloud
 ```
 
 - **No inbound ports** — your machine only opens an outbound WebSocket
@@ -56,52 +55,67 @@ tuna connect --port 3000 --subdomain my-app
 
 ---
 
-## Quick Start
-
-### 1. Install TunaAgent
+## Install
 
 ```bash
-# macOS / Linux
-curl -fsSL https://get.tunaagent.dev | bash
+# macOS / Linux (one-liner)
+curl -fsSL https://get.tunaagent.dev/install.sh | bash
+
+# Or download a release from GitHub
+# https://github.com/andyeswong/tunapi/releases/latest
 
 # Or build from source
-git clone https://github.com/andyeswong/tunaagent.git
-cd tunaagent
-go build -o tuna ./cmd/tunaagent
-sudo mv tuna /usr/local/bin/
+git clone https://github.com/andyeswong/tunapi.git
+cd tunapi
+go build -o tuna-agent ./cmd/tunagent
+go build -o tuna ./cmd/tunctl
+go build -o tuna-server ./cmd/tunapi
+sudo mv tuna-agent tuna tuna-server /usr/local/bin/
 ```
 
-### 2. Run a TunaHub (or use a public one)
+---
+
+## Quick Start
+
+### 1. Run a TunaHub (or use a public one)
 
 ```bash
 # The server component that receives the tunnels
-git clone https://github.com/andyeswong/tunapi.git
-cd tunapi
-go build -o tuna-server ./cmd/tunapi
+git clone https://github.com/andyeswong/tunaagent.git
+cd tunaagent
+go build -o tuna-server .
+go build -o tuna .
 
 # Run it
-TUNAPI_SECRET=your-secret \
-TUNAPI_BASE_DOMAIN=tunapps.example.com \
+TUNA_SECRET=your-secret \
+TUNA_BASE_DOMAIN=tuna.cloud \
 ./tuna-server
+```
+
+### 2. Register your first agent
+
+```bash
+# From another terminal, create an agent via the TunaHub API
+./tuna agent create --name my-laptop
+# Returns: {"id":"ag_xxx","name":"my-laptop","token":"tok_xxx"}
 ```
 
 ### 3. Connect your first service
 
 ```bash
-# Register an agent (get your API key from the TunaHub admin)
-tuna login https://tunapps.example.com --secret your-secret
+# Login with the agent credentials
+export TUNA_AGENT_ID=ag_xxx
+export TUNA_AGENT_TOKEN=tok_xxx
+export TUNA_SERVER=https://tuna.cloud
 
 # Expose a local service
-tuna connect --port 3000 --subdomain my-app
+./tuna-agent
 
 # Your app is now live at:
-# https://my-app.tunapps.example.com
+# https://my-laptop.tuna.cloud
 
-# Check status
-tuna status
-
-# Disconnect
-tuna disconnect
+# Check it's working
+./tuna agent list
 ```
 
 ---
@@ -109,65 +123,120 @@ tuna disconnect
 ## Day-to-Day Shell Usage 🐚
 
 ```bash
-# Expose a dev server
+# --- Setup aliases (add to ~/.bashrc or ~/.zshrc) ---
+alias tuna='tuna-agent'
+alias tunactl='tuna'
+
+# tuna connect — expose a local port
 tuna connect --port 5173 --subdomain frontend-dev
 
-# Expose a Node API
+# tuna connect — expose a Node API
 tuna connect --port 3000 --subdomain api-prod
 
-# Expose multiple services at once
-tuna connect --port 3000  --subdomain api    &
-tuna connect --port 5173  --subdomain web     &
-tuna connect --port 5432  --subdomain postgres &
-wait
+# tuna connect — expose with a random subdomain (instant share)
+tuna connect --port 8000 --random
 
-# See all active tunnels
+# tuna connect — persistent tunnel as a systemd service
+tuna connect --port 3000 --subdomain my-app --daemon
+
+# tuna list — see all active tunnels
 tuna list
 
-# Inspect a tunnel
-tuna inspect api
+# tuna agent — register a new agent
+tuna agent create --name laptop
+tuna agent list
+tuna agent delete --name old-laptop
 
-# Share a local URL instantly
-python3 -m http.server 8000 &
-tuna connect --port 8000 --subdomain $(whoami)-share
+# --- Expose multiple services at once ---
+tuna connect --port 3000  --subdomain api    &
+tuna connect --port 5173  --subdomain web    &
+tuna connect --port 5432  --subdomain pg     &
+wait
 
-# Persistent tunnel (add to rc.local or systemd)
-tuna connect --port 3000 --subdomain my-app --daemon
+# --- Share a local file server instantly ---
+python3 -m http.server 8000 --directory ~/projects &
+tuna connect --port 8000 --subdomain $(whoami)-files
+
+# --- Expose a dev server, get the URL ---
+URL=$(tuna connect --port 3000 --subdomain my-dev --json | jq -r .url)
+echo "Share this: $URL"
+
+# --- Expose SSH ( tunneling TCP, not HTTP) ---
+# (TunaAgent forwards any TCP protocol, not just HTTP)
+tuna connect --port 22 --subdomain my-pi --proto tcp
+
+# --- Inspect and debug ---
+tuna inspect api          # see connection stats
+tuna logs                # tail agent logs
+tuna status              # health check
+```
+
+---
+
+## Systemd Service (Persistent Tunnel)
+
+```bash
+# Create the service file
+sudo tee /etc/systemd/system/tuna-agent.service > /dev/null << 'EOF'
+[Unit]
+Description=TunaAgent — reverse tunnel
+After=network.target
+
+[Service]
+Environment="TUNA_AGENT_ID=ag_xxx"
+Environment="TUNA_AGENT_TOKEN=tok_xxx"
+Environment="TUNA_SERVER=wss://tuna.cloud/agent/connect"
+Environment="TUNA_SUBDOMAIN=my-app"
+Environment="TUNA_PORT=3000"
+ExecStart=/usr/local/bin/tuna-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable tuna-agent
+sudo systemctl start tuna-agent
+
+# Monitor
+sudo journalctl -u tuna-agent -f
 ```
 
 ---
 
 ## Components
 
-| Component | Language | Description |
-|-----------|----------|-------------|
-| **TunaAgent** | Go | The client you run locally. Opens the WebSocket tunnel. |
-| **TunaHub** | Go | The server. Receives tunnels, routes HTTP traffic. |
-| **Tuna** | Go | The CLI. Login, connect, list, inspect, disconnect. |
+| Binary | Role | Product Name |
+|--------|------|-------------|
+| `tuna-server` | Server (runs on your VPS) | **TunaHub** |
+| `tuna-agent` | Client (runs on your machine) | **TunaAgent** 🐟 |
+| `tuna` | Admin CLI (manage agents and routes) | **Tuna** |
 
-### Running your own TunaHub
+---
+
+## Running Your Own TunaHub
 
 ```bash
-# Minimal production setup
-git clone https://github.com/andyeswong/tunapi.git
-cd tunapi
+# Clone and build
+git clone https://github.com/andyeswong/tunaagent.git
+cd tunaagent
 
-# Build all components
-go build -o tuna-server .
-go build -o tuna ./cmd/tunaagent
-go build -o tunactl ./cmd/tunctl
+go build -o tuna-server .          # the server
+go build -o tuna-agent ./cmd/tunagent  # the client
+go build -o tuna ./cmd/tunctl         # the CLI
 
-# Run with environment variables
-TUNAPI_SECRET=super-secret \
-TUNAPI_BASE_DOMAIN=tunapps.example.com \
+# Configure nginx (SSL termination)
+sudo cp tuna.cloud.nginx.conf /etc/nginx/sites-available/tuna
+sudo ln -s /etc/nginx/sites-available/tuna /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# Run TunaHub
+TUNA_SECRET=change-me-in-production \
+TUNA_BASE_DOMAIN=tuna.cloud \
 ./tuna-server
-
-# Register your first agent (from another terminal)
-./tunctl agent create --name my-laptop
-
-# Copy the agent credentials, then on your laptop:
-tuna login https://tunapps.example.com --secret super-secret
-tuna connect --port 3000 --subdomain my-app
 ```
 
 ---
@@ -179,18 +248,13 @@ tuna connect --port 3000 --subdomain my-app
 Your machine initiates a WebSocket connection to TunaHub. TunaHub uses that connection to route incoming HTTP requests to your local service. **No inbound ports opened on your end.**
 
 ```
-Client (you) ──► TunaHub (your server)
-   │                  │
-   │  wss://tunapps   │  HTTPS from internet
-   │  .example.com    │
-   │                  ▼
-   │            nginx :443
-   │                  │
-   │            routes to active TunaAgent
-   │                  │
-   ▼                  ▼
-TunaAgent ──────► your localhost:PORT
-(your machine)
+Internet ──► nginx :443 ──► TunaHub ──► active TunaAgent
+                                        │
+                                  ┌─────┴─────┐
+                                  │            │
+                                  ▼            ▼
+                            TunaAgent ──► localhost:PORT
+                            (your machine)
 ```
 
 ### Direct Mode (for reachable IPs)
@@ -213,10 +277,10 @@ tuna connect --port 3000 --subdomain demo-client-2024
 # Expose a homelab service without port forwarding
 tuna connect --port 8123 --subdomain homeassistant
 
-# Temporary share for debugging (adds random subdomain)
+# Temporary share for debugging (random subdomain)
 tuna connect --port 8000 --random
 
-# Development webhook testing (expose local dev server)
+# Development webhook testing
 tuna connect --port 3000 --subdomain webhook-debug
 
 # Share a local ML model API
@@ -224,42 +288,47 @@ tuna connect --port 8000 --subdomain llama-api
 
 # Access your Pi from anywhere
 ssh pi@home
-tuna connect --port 22 --subdomain my-pi  # expose SSH
+tuna connect --port 22 --subdomain my-pi
+
+# Share a local tunnel for GitHub Actions / CI testing
+tuna connect --port 3000 --subdomain ci-test --header "X-Debug: true"
 ```
 
 ---
 
-## TunaCloud (Public TunaHub)
-
-Free public instance hosted by the community:
+## Environment Variables
 
 ```bash
-# Using the public TunaCloud
-tuna login https://tunapps.andres-wong.com --secret tunapi_secret_2026
-tuna connect --port 3000 --subdomain my-app
+# TunaAgent (client)
+TUNA_AGENT_ID=ag_xxx          # Agent ID from tuna agent create
+TUNA_AGENT_TOKEN=tok_xxx      # Agent token
+TUNA_AGENT_NAME=my-laptop     # Human-readable name
+TUNA_SERVER=wss://tuna.cloud/agent/connect  # TunaHub WebSocket endpoint
+TUNA_SUBDOMAIN=my-app         # Default subdomain
+TUNA_PORT=3000                # Default local port
+TUNA_LOG_LEVEL=info           # debug | info | warn
+
+# TunaHub (server)
+TUNA_SECRET=change-me         # Admin secret
+TUNA_BASE_DOMAIN=tuna.cloud    # Your base domain
+TUNA_PORT=8443                # HTTP API port (default 8443)
+```
+
+---
+
+## TunaCloud (Public Instance)
+
+Free public TunaHub for anyone to use:
+
+```bash
+export TUNA_AGENT_ID=your-agent-id
+export TUNA_AGENT_TOKEN=your-token
+export TUNA_SERVER=wss://tuna.cloud/agent/connect
+
+tuna-agent
 ```
 
 > **Note:** Public instances have rate limits and are best-effort. For production, run your own TunaHub.
-
----
-
-## Project Structure
-
-```
-tunapi/
-├── cmd/
-│   ├── tunagent/          # TunaAgent (client)
-│   └── tunctl/            # Tuna CLI (admin)
-├── pkg/
-│   ├── types/             # Shared types
-│   └── ...
-├── main.go                # TunaHub (server)
-├── server.go              # HTTP API + WebSocket hub
-├── ws.go                  # WebSocket handling
-├── types.go               # Core types
-├── README.md              # This file
-└── docs/                  # Full documentation
-```
 
 ---
 
@@ -279,7 +348,7 @@ tunapi/
 
 ## Contributing
 
-```
+```bash
 # Fork, clone, build
 git clone https://github.com/your-handle/tunaagent.git
 cd tunaagent
