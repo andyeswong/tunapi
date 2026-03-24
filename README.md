@@ -1,172 +1,305 @@
-# TunAPI
+# TunaAgent 🐟
 
-Dynamic subdomain reverse-proxy with WebSocket tunnel support.
+> **Free your services. Swim upstream.**
 
-Expose services from machines behind NAT using a reverse tunnel — no inbound ports needed on the client.
+Expose local services to the world — no inbound ports, no configuration, no cloud account needed. TunaAgent creates a secure reverse tunnel from your machine to your domain, powered by a WebSocket connection your machine initiates.
 
-## Documentation
+Open source. Always free.
 
-**[→ Start here: docs/README.md](./docs/README.md)**
+---
 
-Quick links:
-- [Getting Started](./docs/GETTING_STARTED.md) — 5-minute setup
-- [Install](./docs/INSTALL.md) — Production deployment
-- [Server Operations](./docs/SERVER.md) — Managing the server
-- [TunAgent](./docs/TUNAGENT.md) — Client agent setup
-- [API Reference](./docs/API.md)
-- [CLI (tunctl)](./docs/CLI.md)
-- [Troubleshooting](./docs/TROUBLESHOOTING.md)
+## TL;DR
+
+```bash
+# Install
+curl -fsSL https://get.tunaagent.dev | bash
+
+# Connect your first service (one command)
+tuna connect --port 3000 --subdomain my-app
+
+# Done. Your app is live at:
+# https://my-app.tunapps.example.com
+```
+
+---
+
+## What It Does
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         YOUR MACHINE                              │
+│                                                                   │
+│   tuna connect --port 3000 --subdomain my-app                   │
+│                    │                                              │
+│              TunaAgent                                           │
+│                 🐟 ──────────────────────────────►  wss://tuna.cloud
+│                        (outbound :443)                            │
+└─────────────────────────────────────────────────────────────────┘
+                                                              │
+                                                              ▼
+                              ┌─────────────────────────────────────┐
+                              │            TunaHub                  │
+                              │     (your publicly hosted server)     │
+                              │                                      │
+                              │  nginx :443 → routes incoming       │
+                              │  requests to the right TunaAgent    │
+                              └─────────────────────────────────────┘
+                                                              │
+                                                              ▼
+                              https://my-app.tunapps.example.com
+```
+
+- **No inbound ports** — your machine only opens an outbound WebSocket
+- **No cloud signup** — run your own TunaHub or use any public one
+- **Works behind NAT** — home server, laptop, Raspberry Pi behind router
+- **Zero config** — one command to expose any local port
+
+---
 
 ## Quick Start
 
+### 1. Install TunaAgent
+
 ```bash
+# macOS / Linux
+curl -fsSL https://get.tunaagent.dev | bash
+
+# Or build from source
+git clone https://github.com/andyeswong/tunaagent.git
+cd tunaagent
+go build -o tuna ./cmd/tunaagent
+sudo mv tuna /usr/local/bin/
+```
+
+### 2. Run a TunaHub (or use a public one)
+
+```bash
+# The server component that receives the tunnels
 git clone https://github.com/andyeswong/tunapi.git
 cd tunapi
+go build -o tuna-server ./cmd/tunapi
 
-# Build
-go build -o tunapi .
-go build -o tunagent ./cmd/tunagent
-go build -o tunctl ./cmd/tunctl
-
-# Run server
-TUNAPI_SECRET=my-secret TUNAPI_BASE_DOMAIN=tunapps.example.com ./tunapi
+# Run it
+TUNAPI_SECRET=your-secret \
+TUNAPI_BASE_DOMAIN=tunapps.example.com \
+./tuna-server
 ```
 
-See [Getting Started](./docs/GETTING_STARTED.md) for full guide.
+### 3. Connect your first service
 
-## Architecture
+```bash
+# Register an agent (get your API key from the TunaHub admin)
+tuna login https://tunapps.example.com --secret your-secret
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              INTERNET                                     │
-│                   https://myapp.tunapps.example.com                      │
-└──────────────────────────────────┬────────────────────────────────────────┘
-                                   │ TLS (port 443)
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  tunapi-server (VPS / public IP)            tunapi-server: 100.65.86.28 │
-│  ┌─────────────┐     ┌──────────────┐     ┌─────────────────────────┐   │
-│  │    nginx    │ ──▶ │   :8443      │     │   AgentHub (in-memory)  │   │
-│  │  (SSL term) │     │  HTTP server │     │   ┌─────────────────┐   │   │
-│  │  port 80/443│     │  + WS hub    │     │   │  cliente-test   │   │   │
-│  └─────────────┘     └──────────────┘     │   │  ag_mUXw_...    │   │   │
-│                                           │   │  WS connected ✓ │   │   │
-│  Routes stored in:                        │   └─────────────────┘   │   │
-│  /etc/tunapi/routes.json                  │   Agents persisted in:   │   │
-│  /etc/tunapi/agents.json                  │   /etc/tunapi/agents.json│   │
-└───────────────────────────────────────────┼───────────────────────────┘   │
-                                            │                               │
-                         ┌──────────────────┴──────┐                       │
-                         │   WebSocket tunnel       │                       │
-                         │   wss://tunapps.example  │                       │
-                         │   .com/agent/connect     │                       │
-                         └──────────────────┬──────┘                       │
-                                            │ outbound :443 (client INITIATES)
-                         ┌──────────────────┴──────┐                       │
-                         │                           │                       │
-                    ┌────┴──────────────────┐  ┌───┴────────────┐          │
-                    │  tunapi-server         │  │ tunapi-server  │          │
-                    │  (another agent)       │  │ (another agent) │          │
-                    └────────────────────────┘  └────────────────┘          │
-                                            │                                │
-                         ┌──────────────────┴──────┐                        │
-                         │   Client network         │                        │
-                         │   (behind NAT/firewall)  │                        │
-                         │   No inbound ports open  │                        │
-                         │                           │                        │
-                    ┌────┴──────────────────┐  ┌───┴────────────┐          │
-                    │  tunagent             │  │ tunagent       │          │
-                    │  (cliente-test)        │  │ (another-agent) │          │
-                    │  192.168.35.89         │  │ 10.0.0.50       │          │
-                    └────┬──────────────────┘  └──┬────────────┘          │
-                         │                           │                       │
-                    ┌────┴──────────────────┐  ┌───┴────────────┐          │
-                    │  Apache / Nginx        │  │ Service         │          │
-                    │  localhost:80          │  │ localhost:8080   │          │
-                    │  (web server)          │  │ (API, app, etc.) │          │
-                    └────────────────────────┘  └─────────────────┘          │
-                                                                         │
-                         MODE A: Agent mode (NAT)  ◄─────────────────────────┘
-                         MODE B: Direct mode (no agent)
+# Expose a local service
+tuna connect --port 3000 --subdomain my-app
 
+# Your app is now live at:
+# https://my-app.tunapps.example.com
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│  DIRECT MODE (no agent needed)                                          │
-│                                                                         │
-│  Internet → nginx → tunapi-server :8443 ──▶ 192.168.35.129:80           │
-│                                       (direct TCP)     (no agent)       │
-└─────────────────────────────────────────────────────────────────────────┘
+# Check status
+tuna status
+
+# Disconnect
+tuna disconnect
 ```
 
-## Traffic Flow
+---
 
-### Mode A — Agent mode (reverse tunnel, for NAT'ed clients)
+## Day-to-Day Shell Usage 🐚
 
-```
-1.  User browses to: https://myapp.tunapps.example.com/
+```bash
+# Expose a dev server
+tuna connect --port 5173 --subdomain frontend-dev
 
-2.  DNS: myapp.tunapps.example.com → A → public IP of tunapi-server
+# Expose a Node API
+tuna connect --port 3000 --subdomain api-prod
 
-3.  nginx receives on :443 (SSL termination)
-    - Looks up myapp subdomain in routes.json
-    - Routes to 127.0.0.1:8443 (tunapi-server)
+# Expose multiple services at once
+tuna connect --port 3000  --subdomain api    &
+tuna connect --port 5173  --subdomain web     &
+tuna connect --port 5432  --subdomain postgres &
+wait
 
-4.  tunapi-server receives HTTP request
-    - Matches Host header → route for "myapp"
-    - Route mode = ModeAgent → looks up agent "myapp" in hub
-    - Finds tunagent connected via WebSocket
-    - Sends {type: "open_stream"} message to tunagent via WS
+# See all active tunnels
+tuna list
 
-5.  tunagent (on client, behind NAT) receives open_stream
-    - Opens TCP to localhost:80 (its local web server)
-    - Sends raw HTTP request: "GET / HTTP/1.1\r\nHost: myapp.tunapps.example.com\r\n..."
+# Inspect a tunnel
+tuna inspect api
 
-6.  Local web server (Apache/Nginx) responds
+# Share a local URL instantly
+python3 -m http.server 8000 &
+tuna connect --port 8000 --subdomain $(whoami)-share
 
-7.  tunagent reads response bytes, sends stream_data chunks back via WS
-    - WS message: {type: "stream_data", streamId: "st_xxx", data: [bytes], eof: false}
-
-8.  tunapi-server receives chunks, forwards to nginx → client
-
-9.  tunagent sends final chunk: {type: "stream_data", streamId: "st_xxx", eof: true}
-
-10. tunapi-server sends final response to nginx → user sees the web page
+# Persistent tunnel (add to rc.local or systemd)
+tuna connect --port 3000 --subdomain my-app --daemon
 ```
 
-### Mode B — Direct mode (server proxies straight to target IP)
-
-```
-1.  User browses to: https://demo.tunapps.example.com/
-
-2.  nginx → tunapi-server :8443 (same as above steps 2-3)
-
-3.  tunapi-server matches route for "demo"
-    - Route mode = ModeDirect
-    - Opens TCP directly to 192.168.35.129:80
-    - Pipes request/response without any agent
-
-4.  Response returns straight through tunapi-server → nginx → user
-```
-
-## Key Difference
-
-| | Agent mode | Direct mode |
-|---|---|---|
-| Agent needed | Yes (tunagent on client) | No |
-| Client network | Behind NAT / firewall | Accessible from server IP |
-| Connection direction | Client → Server (outbound) | Server → Client (inbound) |
-| Inbound ports on client | **0** (fully private) | 1 (target port open) |
-| Use case | Laptops, home servers, NAT networks | VPS, co-lo, reachable IPs |
+---
 
 ## Components
 
-| Component | Where it runs | What it does |
-|---|---|---|
-| **nginx** | tunapi-server (public VPS) | SSL termination, routes :443 → :8443 |
-| **tunapi-server** | tunapi-server (public VPS) | HTTP routing, WS hub, agent registry |
-| **tunctl** | Anywhere (admin laptop, server) | CLI to manage routes and agents |
-| **tunagent** | Client (behind NAT) | Opens WS tunnel, forwards to local service |
+| Component | Language | Description |
+|-----------|----------|-------------|
+| **TunaAgent** | Go | The client you run locally. Opens the WebSocket tunnel. |
+| **TunaHub** | Go | The server. Receives tunnels, routes HTTP traffic. |
+| **Tuna** | Go | The CLI. Login, connect, list, inspect, disconnect. |
 
-## Production
+### Running your own TunaHub
 
-See [Install guide](./docs/INSTALL.md) for systemd + nginx setup.
+```bash
+# Minimal production setup
+git clone https://github.com/andyeswong/tunapi.git
+cd tunapi
+
+# Build all components
+go build -o tuna-server .
+go build -o tuna ./cmd/tunaagent
+go build -o tunactl ./cmd/tunctl
+
+# Run with environment variables
+TUNAPI_SECRET=super-secret \
+TUNAPI_BASE_DOMAIN=tunapps.example.com \
+./tuna-server
+
+# Register your first agent (from another terminal)
+./tunctl agent create --name my-laptop
+
+# Copy the agent credentials, then on your laptop:
+tuna login https://tunapps.example.com --secret super-secret
+tuna connect --port 3000 --subdomain my-app
+```
+
+---
+
+## Architecture
+
+### Agent Mode (for NAT'ed clients)
+
+Your machine initiates a WebSocket connection to TunaHub. TunaHub uses that connection to route incoming HTTP requests to your local service. **No inbound ports opened on your end.**
+
+```
+Client (you) ──► TunaHub (your server)
+   │                  │
+   │  wss://tunapps   │  HTTPS from internet
+   │  .example.com    │
+   │                  ▼
+   │            nginx :443
+   │                  │
+   │            routes to active TunaAgent
+   │                  │
+   ▼                  ▼
+TunaAgent ──────► your localhost:PORT
+(your machine)
+```
+
+### Direct Mode (for reachable IPs)
+
+TunaHub connects directly to your server's IP. No agent needed, but your server must be reachable from TunaHub.
+
+```
+Internet ──► nginx ──► TunaHub ──► 192.168.1.100:80
+                                    (your server, no agent)
+```
+
+---
+
+## Use Cases
+
+```bash
+# Share a local demo with a client
+tuna connect --port 3000 --subdomain demo-client-2024
+
+# Expose a homelab service without port forwarding
+tuna connect --port 8123 --subdomain homeassistant
+
+# Temporary share for debugging (adds random subdomain)
+tuna connect --port 8000 --random
+
+# Development webhook testing (expose local dev server)
+tuna connect --port 3000 --subdomain webhook-debug
+
+# Share a local ML model API
+tuna connect --port 8000 --subdomain llama-api
+
+# Access your Pi from anywhere
+ssh pi@home
+tuna connect --port 22 --subdomain my-pi  # expose SSH
+```
+
+---
+
+## TunaCloud (Public TunaHub)
+
+Free public instance hosted by the community:
+
+```bash
+# Using the public TunaCloud
+tuna login https://tunapps.andres-wong.com --secret tunapi_secret_2026
+tuna connect --port 3000 --subdomain my-app
+```
+
+> **Note:** Public instances have rate limits and are best-effort. For production, run your own TunaHub.
+
+---
+
+## Project Structure
+
+```
+tunapi/
+├── cmd/
+│   ├── tunagent/          # TunaAgent (client)
+│   └── tunctl/            # Tuna CLI (admin)
+├── pkg/
+│   ├── types/             # Shared types
+│   └── ...
+├── main.go                # TunaHub (server)
+├── server.go              # HTTP API + WebSocket hub
+├── ws.go                  # WebSocket handling
+├── types.go               # Core types
+├── README.md              # This file
+└── docs/                  # Full documentation
+```
+
+---
+
+## Full Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](./docs/GETTING_STARTED.md) | 5-minute setup |
+| [Install](./docs/INSTALL.md) | Production deployment |
+| [Server Operations](./docs/SERVER.md) | Running TunaHub |
+| [TunaAgent](./docs/TUNAGENT.md) | Client setup |
+| [CLI Reference](./docs/CLI.md) | `tuna` command reference |
+| [API Reference](./docs/API.md) | TunaHub HTTP API |
+| [Troubleshooting](./docs/TROUBLESHOOTING.md) | Common issues |
+
+---
+
+## Contributing
+
+```
+# Fork, clone, build
+git clone https://github.com/your-handle/tunaagent.git
+cd tunaagent
+go build ./...
+
+# Run tests
+go test ./...
+
+# Submit a PR
+# All contributors become part of the Shoal 🐠
+```
+
+Open an Issue for bugs, feature requests, or just to say hi.
+
+---
+
+## License
+
+MIT — free your ocean.
+
+---
+
+**"The fish that swims upstream most powerfully is the one that matters most."**
